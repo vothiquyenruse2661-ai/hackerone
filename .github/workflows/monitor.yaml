@@ -1,0 +1,71 @@
+name: BBP Subdomain Monitor
+
+on:
+  schedule:
+    - cron: '0 8 */2 * *'
+  workflow_dispatch:
+    inputs:
+      force_scan:
+        description: 'Force full scan (ignore first-run baseline)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: |
+          echo "::group::Installing subfinder"
+          go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest 2>&1 | tail -5
+          echo "::endgroup::"
+
+          echo "::group::Installing httpx"
+          go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest 2>&1 | tail -5
+          echo "::endgroup::"
+
+          echo "::group::Installing nuclei"
+          go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 2>&1 | tail -5
+          echo "::endgroup::"
+
+          echo "::group::Update Nuclei templates"
+          nuclei -update-templates 2>&1 | tail -5
+          echo "::endgroup::"
+
+          echo "All tools installed:"
+          subfinder -version 2>&1 | head -1
+          httpx -version 2>&1 | head -1
+          nuclei -version 2>&1 | head -1
+
+      - name: Restore State Cache
+        uses: actions/cache@v4
+        with:
+          path: data/
+          key: bbp-state-${{ github.run_id }}
+          restore-keys: |
+            bbp-state-
+
+      - name: Run Monitor
+        env:
+          CHAOS_API_KEY: ${{ secrets.CHAOS_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FORCE_SCAN: ${{ inputs.force_scan || 'false' }}
+        run: |
+          chmod +x scripts/run.sh
+          bash scripts/run.sh
+
+      - name: Save State Cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/
+          key: bbp-state-${{ github.run_id }}
